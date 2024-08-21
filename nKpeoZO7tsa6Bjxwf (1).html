@@ -1,0 +1,276 @@
+<!DOCTYPE html><html><head><base href="https://multilingual-charcoal-neomorphic-object-detection.app/"><title>Multilingual Neomorphic Real-Time Object Detection</title><style>
+    :root {
+        --bg-color: #2D3436;
+        --text-color: #DFE6E9;
+        --shadow-dark: #23292B;
+        --shadow-light: #373F41;
+        --accent-color: #00CEC9;
+    }
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: var(--bg-color);
+        color: var(--text-color);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-height: 100vh;
+    }
+    h1 {
+        color: var(--accent-color);
+        text-shadow: 2px 2px 4px var(--shadow-dark);
+    }
+    .neomorphic {
+        background-color: var(--bg-color);
+        box-shadow: 8px 8px 16px var(--shadow-dark),
+                    -8px -8px 16px var(--shadow-light);
+        border-radius: 20px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    #videoContainer {
+        position: relative;
+        width: 640px;
+        height: 480px;
+    }
+    #video, #canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        border-radius: 15px;
+    }
+    #detectedObjects {
+        width: 100%;
+        max-width: 640px;
+    }
+    #detectedObjects h2 {
+        margin-top: 0;
+        color: var(--accent-color);
+    }
+    #objectTable {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0 10px;
+    }
+    #objectTable th, #objectTable td {
+        padding: 10px;
+        text-align: left;
+        background-color: var(--shadow-dark);
+        border-radius: 10px;
+    }
+    #objectTable th {
+        background-color: var(--accent-color);
+        color: var(--bg-color);
+    }
+    #error {
+        color: #FF7675;
+        margin-top: 10px;
+        text-align: center;
+    }
+    .loader {
+        border: 5px solid var(--shadow-light);
+        border-top: 5px solid var(--accent-color);
+        border-radius: 50%;
+        width: 50px;
+        height: 50px;
+        animation: spin 1s linear infinite;
+        margin: 20px auto;
+    }
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    #languageSelect {
+        margin-bottom: 20px;
+        padding: 10px;
+        border-radius: 10px;
+        background-color: var(--bg-color);
+        color: var(--text-color);
+        border: none;
+        box-shadow: inset 4px 4px 8px var(--shadow-dark),
+                    inset -4px -4px 8px var(--shadow-light);
+    }
+    @media (max-width: 660px) {
+        #videoContainer, #detectedObjects {
+            width: 100%;
+        }
+        #videoContainer {
+            height: auto;
+            aspect-ratio: 4/3;
+        }
+    }
+</style></head><body>
+    <h1>Multilingual Neomorphic Real-Time Object Detection</h1>
+    <select id="languageSelect" class="neomorphic">
+    <option value="">Select Additional Language</option>
+    <option value="fr">French</option>
+</select>
+    <div id="videoContainer" class="neomorphic">
+        <video id="video" autoplay="" muted="" playsinline=""></video>
+        <canvas id="canvas"></canvas>
+    </div>
+    <div id="detectedObjects" class="neomorphic">
+    <h2>Detected Objects</h2>
+    <table id="objectTable">
+        <thead>
+            <tr>
+                <th>English</th>
+                <th>Translation</th>
+                <th>Time Detected</th>
+            </tr>
+        </thead>
+        <tbody id="objectList"></tbody>
+    </table>
+</div>
+    <div id="error"></div>
+    <div id="loader" class="loader"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const objectList = document.getElementById('objectList');
+    const errorDiv = document.getElementById('error');
+    const loader = document.getElementById('loader');
+    const languageSelect = document.getElementById('languageSelect');
+
+    let model;
+    let detectedObjects = new Map();
+    let isDetecting = false;
+    let selectedLanguage = '';
+
+    languageSelect.addEventListener('change', (event) => {
+        selectedLanguage = event.target.value;
+        updateObjectListDisplay();
+    });
+
+    // Load the COCO-SSD model
+    async function loadModel() {
+        try {
+            model = await cocoSsd.load();
+            loader.style.display = 'none';
+            startVideo();
+        } catch (err) {
+            errorDiv.textContent = 'Failed to load the model: ' + err.message;
+            loader.style.display = 'none';
+        }
+    }
+
+    // Start the video stream
+    async function startVideo() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+            video.srcObject = stream;
+            video.addEventListener('loadeddata', () => {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                detectObjects();
+            });
+        } catch (err) {
+            errorDiv.textContent = 'Error accessing the camera: ' + err.message;
+        }
+    }
+
+    // Detect objects in the video stream
+    async function detectObjects() {
+        if (isDetecting) return;
+        isDetecting = true;
+
+        try {
+            const predictions = await model.detect(video);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            predictions.forEach(prediction => {
+                if (prediction.score > 0.66) {  // Only show predictions with over 66% confidence
+                    drawPrediction(prediction);
+                    updateObjectList(prediction);
+                }
+            });
+        } catch (err) {
+            console.error('Detection error:', err);
+        }
+
+        isDetecting = false;
+        setTimeout(detectObjects, 500); // Detect every 500ms (2 FPS)
+    }
+
+    // Draw bounding box and label for a prediction
+    function drawPrediction(prediction) {
+        const [x, y, width, height] = prediction.bbox;
+        
+        ctx.strokeStyle = '#00CEC9';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(x, y, width, height);
+        
+        ctx.fillStyle = '#00CEC9';
+        ctx.font = 'bold 16px Sans-serif';
+        const text = `${prediction.class} (${Math.round(prediction.score * 100)}%)`;
+        const textWidth = ctx.measureText(text).width;
+        ctx.fillRect(x, y > 10 ? y - 25 : 10, textWidth + 10, 25);
+        
+        ctx.fillStyle = '#2D3436';
+        ctx.fillText(text, x + 5, y > 10 ? y - 7 : 28);
+    }
+
+    // Update the list of detected objects
+    function updateObjectList(prediction) {
+        if (!detectedObjects.has(prediction.class)) {
+            detectedObjects.set(prediction.class, {
+                time: new Date().toLocaleTimeString(),
+                translation: ''
+            });
+            updateObjectListDisplay();
+        }
+    }
+
+    // Translate text using a free translation API
+    async function translateText(text, targetLanguage) {
+        const apiUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|${targetLanguage}`;
+        try {
+            const response = await fetch(apiUrl);
+            const data = await response.json();
+            return data.responseData.translatedText;
+        } catch (error) {
+            console.error('Translation error:', error);
+            return text; // Return original text if translation fails
+        }
+    }
+
+    // Update the display of detected objects
+    async function updateObjectListDisplay() {
+        objectList.innerHTML = '';
+        for (const [object, data] of detectedObjects) {
+            const row = document.createElement('tr');
+            
+            const englishCell = document.createElement('td');
+            englishCell.textContent = object;
+            row.appendChild(englishCell);
+            
+            const translationCell = document.createElement('td');
+            if (selectedLanguage) {
+                if (!data.translation) {
+                    data.translation = await translateText(object, selectedLanguage);
+                }
+                translationCell.textContent = data.translation;
+            } else {
+                translationCell.textContent = '-';
+            }
+            row.appendChild(translationCell);
+            
+            const timeCell = document.createElement('td');
+            timeCell.textContent = data.time;
+            row.appendChild(timeCell);
+            
+            objectList.appendChild(row);
+        }
+    }
+
+    // Start the application
+    loadModel();
+</script>
+</body></html>
